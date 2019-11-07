@@ -14,4 +14,3 @@ require (
 
 go 1.13
 
-replace github.com/libp2p/go-libp2p-swarm => ../go-libp2p-swarm
