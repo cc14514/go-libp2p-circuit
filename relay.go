@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,13 +29,14 @@ const ProtoID = "/libp2p/circuit/relay/0.1.0"
 const maxMessageSize = 4096
 
 var (
-	RelayAcceptTimeout   = 10 * time.Second // 10
-	HopConnectTimeout    = 20 * time.Second // 30
-	StopHandshakeTimeout = 40 * time.Second // 60
-	DialDelay            = 3 * time.Second // add by liangc
-	HopStreamBufferSize  = 4096
-	HopStreamLimit       = 1 << 19 // 512K hops for 1M goroutines
+	RelayAcceptTimeout   = 10 * time.Second
+	HopConnectTimeout    = 30 * time.Second
+	StopHandshakeTimeout = 1 * time.Minute
 
+	HopStreamBufferSize = 4096
+	HopStreamLimit      = 1 << 19 // 512K hops for 1M goroutines
+
+	DialDelay = 3 * time.Second // add by liangc
 )
 
 // Relay is the relay transport and service.
@@ -46,14 +46,10 @@ type Relay struct {
 	ctx      context.Context
 	self     peer.ID
 
-	active    bool
-	hop       bool
-	discovery bool
+	active bool
+	hop    bool
 
 	incoming chan *Conn
-
-	relays map[peer.ID]struct{}
-	mx     sync.Mutex
 
 	// atomic counters
 	streamCount  int32
@@ -73,9 +69,14 @@ var (
 	// this will only relay traffic between peers already connected to this
 	// node.
 	OptHop = RelayOpt(1)
-	// OptDiscovery configures this relay transport to discover new relays
-	// by probing every new peer. You almost _certainly_ don't want to
-	// enable this.
+	// OptDiscovery is a no-op. It was introduced as a way to probe new
+	// peers to see if they were willing to act as a relays. However, in
+	// practice, it's useless. While it does test to see if these peers are
+	// relays, it doesn't (and can't), check to see if these peers are
+	// _active_ relays (i.e., will actively dial the target peer).
+	//
+	// This option may be re-enabled in the future but for now you shouldn't
+	// use it.
 	OptDiscovery = RelayOpt(2)
 )
 
@@ -95,7 +96,6 @@ func NewRelay(ctx context.Context, h host.Host, upgrader *tptu.Upgrader, opts ..
 		ctx:      ctx,
 		self:     h.ID(),
 		incoming: make(chan *Conn),
-		relays:   make(map[peer.ID]struct{}),
 	}
 
 	for _, opt := range opts {
@@ -105,17 +105,16 @@ func NewRelay(ctx context.Context, h host.Host, upgrader *tptu.Upgrader, opts ..
 		case OptHop:
 			r.hop = true
 		case OptDiscovery:
-			r.discovery = true
+			log.Errorf(
+				"circuit.OptDiscovery is now a no-op: %s",
+				"dialing peers with a random relay is no longer supported",
+			)
 		default:
 			return nil, fmt.Errorf("unrecognized option: %d", opt)
 		}
 	}
 
 	h.SetStreamHandler(ProtoID, r.handleNewStream)
-
-	if r.discovery {
-		h.Network().Notify(r.notifiee())
-	}
 
 	return r, nil
 }
@@ -143,8 +142,9 @@ func (r *Relay) GetActiveHops() int32 {
 }
 
 func (r *Relay) DialPeer(ctx context.Context, relay peer.AddrInfo, dest peer.AddrInfo) (*Conn, error) {
-	//fmt.Println("<<--replay--", "relay=", relay.String(), "dest=", dest.String())
-	//log.Debugf("dialing peer %s through relay %s", dest.ID, relay.ID)
+
+	log.Debugf("dialing peer %s through relay %s", dest.ID, relay.ID)
+
 	if len(relay.Addrs) > 0 {
 		r.host.Peerstore().AddAddrs(relay.ID, relay.Addrs, peerstore.TempAddrTTL)
 	}
@@ -152,10 +152,9 @@ func (r *Relay) DialPeer(ctx context.Context, relay peer.AddrInfo, dest peer.Add
 	// add by liangc : 降低优先级，延迟拨出即可
 	nodelay := ctx.Value("nodelay")
 	if nodelay == nil || nodelay.(string) != "true" {
-		//fmt.Println("relay-dial-delay : delay", DialDelay, "from", relay.ID.Pretty(), "to", dest.ID.Pretty())
-		time.Sleep(DialDelay)
-		//} else {
-		//fmt.Println("relay-dial-delay : no-delay", "from", relay.ID.Pretty(), "to", dest.ID.Pretty())
+		tc := time.NewTimer(DialDelay)
+		<-tc.C
+		tc.Stop()
 	}
 
 	s, err := r.host.NewStream(ctx, relay.ID, ProtoID)
@@ -206,8 +205,9 @@ func (r *Relay) Matches(addr ma.Multiaddr) bool {
 	return err == nil
 }
 
-func (r *Relay) CanHop(ctx context.Context, id peer.ID) (bool, error) {
-	s, err := r.host.NewStream(ctx, id, ProtoID)
+// Queries a peer for support of hop relay
+func CanHop(ctx context.Context, host host.Host, id peer.ID) (bool, error) {
+	s, err := host.NewStream(ctx, id, ProtoID)
 	if err != nil {
 		return false, err
 	}
@@ -242,6 +242,10 @@ func (r *Relay) CanHop(ctx context.Context, id peer.ID) (bool, error) {
 	return msg.GetCode() == pb.CircuitRelay_SUCCESS, nil
 }
 
+func (r *Relay) CanHop(ctx context.Context, id peer.ID) (bool, error) {
+	return CanHop(ctx, r.host, id)
+}
+
 func (r *Relay) handleNewStream(s network.Stream) {
 	log.Infof("new relay stream from: %s", s.Conn().RemotePeer())
 
@@ -255,7 +259,7 @@ func (r *Relay) handleNewStream(s network.Stream) {
 		r.handleError(s, pb.CircuitRelay_MALFORMED_MESSAGE)
 		return
 	}
-	//fmt.Println("--replay-->>", msg)
+
 	switch msg.GetType() {
 	case pb.CircuitRelay_HOP:
 		r.handleHopStream(s, &msg)
