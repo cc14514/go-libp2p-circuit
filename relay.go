@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -51,6 +52,12 @@ type Relay struct {
 
 	incoming chan *Conn
 
+	// add by liangc >>>>
+	discovery bool
+	relays    map[peer.ID]struct{}
+	mx        sync.Mutex
+	// add by liangc <<<<
+
 	// atomic counters
 	streamCount  int32
 	liveHopCount int32
@@ -91,11 +98,13 @@ func (e RelayError) Error() string {
 // NewRelay constructs a new relay.
 func NewRelay(ctx context.Context, h host.Host, upgrader *tptu.Upgrader, opts ...RelayOpt) (*Relay, error) {
 	r := &Relay{
-		upgrader: upgrader,
-		host:     h,
-		ctx:      ctx,
-		self:     h.ID(),
-		incoming: make(chan *Conn),
+		upgrader:  upgrader,
+		host:      h,
+		ctx:       ctx,
+		self:      h.ID(),
+		incoming:  make(chan *Conn),
+		relays:    make(map[peer.ID]struct{}), // add by liangc
+		discovery: true,                       // add by liangc
 	}
 
 	for _, opt := range opts {
@@ -115,6 +124,8 @@ func NewRelay(ctx context.Context, h host.Host, upgrader *tptu.Upgrader, opts ..
 	}
 
 	h.SetStreamHandler(ProtoID, r.handleNewStream)
+
+	h.Network().Notify(r.notifiee()) // add by liangc
 
 	return r, nil
 }
