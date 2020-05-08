@@ -487,7 +487,7 @@ func (r *Relay) handleCanHop(s network.Stream, msg *pb.CircuitRelay) {
 
 	if err != nil {
 		s.Reset()
-		log.Debugf("error writing relay response: %s", err.Error())
+		// log.Debugf("error writing relay response: %s", err.Error())
 	} else {
 		helpers.FullClose(s)
 	}

@@ -51,4 +51,6 @@ func (n *RelayNotifiee) Connected(s inet.Network, c inet.Conn) {
 	}(c.RemotePeer())
 }
 
-func (n *RelayNotifiee) Disconnected(s inet.Network, c inet.Conn) {}
+func (n *RelayNotifiee) Disconnected(s inet.Network, c inet.Conn) {
+	// TODO : 如果不清理 relays map 会不会影响 relay 拨号效率？
+}

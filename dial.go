@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/libp2p/go-libp2p-core/transport"
-	"math/rand"
 	ma "github.com/multiformats/go-multiaddr"
+	"math/rand"
 
 	"github.com/libp2p/go-libp2p-core/peer"
 )
+
 /*
 func (d *RelayTransport) Dial(ctx context.Context, a ma.Multiaddr, p peer.ID) (transport.CapableConn, error) {
 	c, err := d.Relay().Dial(ctx, a, p)
@@ -58,7 +59,6 @@ func (r *Relay) Dial(ctx context.Context, a ma.Multiaddr, p peer.ID) (*Conn, err
 
 */
 
-
 // add by liangc >>>>
 func (d *RelayTransport) Dial(ctx context.Context, a ma.Multiaddr, p peer.ID) (transport.CapableConn, error) {
 	c, err := d.Relay().Dial(ctx, a, p)
@@ -76,14 +76,8 @@ func (r *Relay) Dial(ctx context.Context, a ma.Multiaddr, p peer.ID) (*Conn, err
 	parts := ma.Split(a)
 
 	spl := ma.Cast(ma.CodeToVarint(P_CIRCUIT))
-	//splNodelay := ma.Cast(ma.CodeToVarint(P_CIRCUIT_NODELAY))
-	//aaa := r.host.Peerstore().PeerInfo(p).Addrs
-	//fmt.Println("ZZZZZZZZZZZZZZZZZZ", p.Pretty(), a, "--", aaa)
 	var relayaddr, destaddr ma.Multiaddr
 	for i, p := range parts {
-		//if p.Equal(splNodelay) {
-		//ctx = context.WithValue(ctx, NodelayProtocol.Name, "true")
-		//} else if p.Equal(spl) {
 		if p.Equal(spl) {
 			relayaddr = ma.Join(parts[:i]...)
 			destaddr = ma.Join(parts[i+1:]...)
@@ -115,7 +109,6 @@ func (r *Relay) tryDialRelays(ctx context.Context, dinfo peer.AddrInfo) (*Conn, 
 		relays = append(relays, p)
 	}
 	r.mx.Unlock()
-
 	// shuffle list of relays, avoid overloading a specific relay
 	for i := range relays {
 		j := rand.Intn(i + 1)
